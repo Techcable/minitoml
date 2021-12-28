@@ -5,8 +5,10 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.EnumSet;
 import java.util.Objects;
+import java.util.function.IntPredicate;
 
 /* package */ final class TomlLexer {
     private final BufferedReader reader;
@@ -89,16 +91,6 @@ import java.util.Objects;
         skipChars(1);
     }
 
-    enum NumberSign {
-        PLUS(1),
-        MINUS(-1),
-        MISSING(1);
-
-        final int value;
-        NumberSign(int value) {
-            this.value = value;
-        }
-    }
     enum NumberParseMode {
         HEX(16),
         BINARY(2),
@@ -111,27 +103,80 @@ import java.util.Objects;
             this.radix = radix;
         }
 
-        public boolean isValidChar(char c) {
+        public boolean isValidDigit(char c) {
             if (this == FLOAT) throw new UnsupportedOperationException();
-            return switch (c) {
-                case '_' -> true;
-                case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
-                    int val = ((int) c) - '0';
-                    return val < this.radix;
-                }
-                case 'A', 'B', 'C', 'D', 'E', 'F' -> this == HEX;
-                default -> false;
-            };
+            if (c >= '0' && c <= '9') {
+                int val = c - '0';
+                return val < this.radix;
+            } else if (c >= 'a' && c <= 'f') {
+                return this == HEX;
+            } else if (c >= 'A' && c <= 'F') {
+                return this == HEX;
+            } else {
+                return false;
+            }
         }
     }
 
+    private static class DigitSequence {
+        final int start, end;
+        final boolean containsUnderscore;
+        static final DigitSequence EMPTY = new DigitSequence(0, 0, false)
+        DigitSequence(int start, int end, boolean containsUnderscore) {
+            this.start = start;
+            this.end = end;
+            assert end >= start;
+            this.containsUnderscore = containsUnderscore;
+        }
+        int length() {
+            return this.end - this.start;
+        }
+        boolean isEmpty() {
+            return this.length() == 0;
+        }
+        private void stripUnderscores(String src, StringBuilder res) {
+            Objects.checkFromToIndex(this.start, this.end, src.length());
+            for (int i = this.start; i < this.end; i++) {
+                char c = src.charAt(i);
+                if (c != '_') {
+                    res.append(c);
+                }
+            }
+        }
+    }
+
+    private DigitSequence parseDigits() throws IOException {
+        this.parseDigits(NumberParseMode.INTEGER)
+    }
+    private DigitSequence parseDigits(NumberParseMode mode) throws IOException {
+        if (mode == NumberParseMode.FLOAT) throw new UnsupportedOperationException();
+        // TODO: Be stricter about leading zeroes
+        int start = charOffset;
+        int c;
+        boolean containsUnderscore = false;
+        while ((c = peekChar()) >= 0) {
+            if (mode.isValidDigit((char) c)) {
+                charOffset += 1;
+            } else if (c == '_') {
+                charOffset += 1;
+                containsUnderscore = true;
+            } else {
+                break;
+            }
+        }
+        int end = charOffset;
+        return new DigitSequence(start, end, containsUnderscore);
+    }
     public Number parseNumber() throws IOException {
         int startIndex = this.charOffset;
-        NumberSign sign = switch (peekChar()) {
-            case '+' -> NumberSign.PLUS;
-            case '-' -> NumberSign.MINUS;
-            default -> NumberSign.MISSING;
+        switch (peekChar()) {
+            case '+', '-' -> skipChar();
+            default -> {}
         };
+        /*
+         * NOTE: We need to special case the possibility of underscores,
+         * which the parser for Integer.parseInt doesn't like.
+         */
         NumberParseMode mode = switch (peekChar()) {
             case '0' -> switch (peekChar(1)) {
                 case 'x' -> NumberParseMode.HEX;
@@ -140,11 +185,133 @@ import java.util.Objects;
                 case '.' -> NumberParseMode.FLOAT;
                 default -> NumberParseMode.INTEGER;
             };
-            // TODO: Better identifiers for keywords
             case 'n', 'i' -> NumberParseMode.FLOAT;
             default -> NumberParseMode.INTEGER;
         };
+        if (mode == NumberParseMode.FLOAT) {
+            // Reset to the beginning
+            startIndex = charOffset;
+            return parseFloat();
+        } else {
+            if (mode != NumberParseMode.INTEGER) skipChars(2); // Skip the 0x, 0b, 0o identifiers for the mode
+            Number value = parseInteger(mode);
+            if (peekChar() == '.') {
+                if (mode == NumberParseMode.INTEGER) {
+                    // Start over and try and parse as float
+                    charOffset = startIndex;
+                    return parseFloat();
+                } else {
+                    throw new TomlSyntaxException(
+                            "Unexpected decimal point after hex/octal/binary integer",
+                            currentLocation()
+                    );
+                }
+            }
+            return value;
+        }
+    }
 
+    private Number parseInteger(NumberParseMode mode) throws IOException {
+        if (mode == NumberParseMode.FLOAT) throw new UnsupportedOperationException();
+        int startLocation =  this.charOffset;
+        boolean hasSign = switch (peekChar()) {
+            case '+', '-' -> true;
+            default -> false;
+        };
+        if (hasSign && mode != NumberParseMode.INTEGER) {
+            throw new TomlSyntaxException(
+                    "Signs are not allowed for hex/binary/octal integers",
+                    currentLocation()
+            );
+        }
+        if (hasSign) skipChar();
+        DigitSequence digits = parseDigits(NumberParseMode.INTEGER);
+        String toParse;
+        if (digits.containsUnderscore) {
+            StringBuilder res = new StringBuilder();
+            if (hasSign) {
+                res.append(this.currentLine.charAt(startLocation));
+            }
+            digits.stripUnderscores(, res);
+            toParse = res.toString();
+        } else {
+            toParse = currentLine.substring(startLocation, charOffset);
+        }
+        try {
+            long l = Long.parseLong(toParse, mode.radix);
+        } catch (NumberFormatException e) {
+            // Only reason this can happen is overflow
+
+        }
+    }
+    private Number parseFloat() throws IOException {
+        int startLocation = this.charOffset;
+        boolean hasSign = true;
+        final boolean isNegative = switch (peekChar()) {
+            case '+' -> false;
+            case '-' ->  true;
+            default -> {
+                hasSign = false;
+                yield false; // Assume not negative
+            }
+        };
+        if (currentLine.startsWith("nan", charOffset)) {
+            skipChars(3);
+            return Double.NaN * (isNegative ? -1 : 0);
+        } else if (currentLine.startsWith("inf", charOffset)) {
+            skipChars(3);
+            return isNegative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        } else {
+            DigitSequence primaryDigits = parseDigits(NumberParseMode.INTEGER);
+            DigitSequence fractionalPart = DigitSequence.EMPTY;
+            if (peekChar() == '.') {
+                fractionalPart = parseDigits(NumberParseMode.INTEGER);
+            }
+            boolean exponentIsNegative = false;
+            DigitSequence exponent = switch (peekChar()) {
+                case 'e', 'E' -> {
+                    skipChar();
+                    switch (peekChar()) {
+                        case '-' -> {
+                            exponentIsNegative = true;
+                            skipChar();
+                        }
+                        case '+' -> skipChar();
+                        default -> {}
+                    }
+                    yield parseDigits();
+                }
+                default -> DigitSequence.EMPTY;
+            };
+            int endLocation = this.charOffset;
+            assert exponent.isEmpty() || endLocation == exponent.end;
+            final String toParse;
+            if (primaryDigits.containsUnderscore || fractionalPart.containsUnderscore || exponent.containsUnderscore) {
+                StringBuilder builder = new StringBuilder(endLocation - startLocation);
+                if (hasSign) {
+                    builder.append(isNegative ? '-' : '+');
+                }
+                primaryDigits.stripUnderscores(this.currentLine, builder);
+                if (!fractionalPart.isEmpty()) {
+                    builder.append('.');
+                    fractionalPart.stripUnderscores(this.currentLine, builder);
+                }
+                if (!fractionalPart.isEmpty()) {
+                    builder.append('E');
+                    if (exponentIsNegative) builder.append('-');
+                    builder.append(exponent);
+                }
+                toParse = builder.toString();
+            } else {
+                toParse = this.currentLine.substring(startLocation, endLocation);
+            }
+            // The following should not fail
+            if (this.flags.contains(ParserFlag.USE_EXACT_DECIMALS)) {
+                return new BigDecimal(toParse);
+            } else {
+                return Double.parseDouble(toParse);
+            }
+        }
     }
 
     /**
@@ -225,12 +392,11 @@ import java.util.Objects;
         };
     }
 
-    public void skipToken(TokenType token) {
-        if (!token.simple) throw new IllegalArgumentException("Token is not simple: " + token);
-        TokenType actualToken = peekToken();
-        if (actualToken != token) throw new IllegalStateException();
-        this.skipChars(token.length());
-
+    public TokenType skipToken() throws IOException {
+        TokenType currentToken = peekToken();
+        if (!currentToken.simple) throw new IllegalArgumentException("Token is not simple: " + currentToken);
+        this.skipChars(currentToken.length());
+        return currentToken;
     }
 
 
@@ -337,6 +503,8 @@ import java.util.Objects;
         }
     }
     private String parseMultilineString(boolean literal) throws IOException {
+        char quoteStyle = literal ? '\'' : '"';
+        assert this.peekChar() == quoteSyle;
         this.skipChars(3);
         throw new UnsupportedOperationException("TODO");
     }
