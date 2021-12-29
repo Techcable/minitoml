@@ -413,6 +413,10 @@ import java.util.Objects;
     }
 
 
+    public String parseKeyPart() {
+        
+    }
+
     public String parseString(boolean allowMultiline) throws IOException {
         boolean literal = switch (peekToken()) {
             case BEGIN_LITERAL_STRING -> true;
