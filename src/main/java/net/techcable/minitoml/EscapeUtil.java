@@ -51,9 +51,7 @@ public class EscapeUtil {
                     String hex = Integer.toHexString(c);
                     // Pad with leading zeros
                     int missing = 4 - hex.length();
-                    for (int i = 0; i < missing; i++) {
-                        res.append('0')
-                    }
+                    res.append("0".repeat(missing));
                     res.append(hex);
                 }
             }

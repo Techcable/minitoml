@@ -42,4 +42,7 @@ public class MathUtil {
         double d = (double) l;
         return ((long) d) == l;
     }
+    public static boolean canFitExactlyInInt(long l) {
+        return ((long) ((int) l)) == l;
+    }
 }

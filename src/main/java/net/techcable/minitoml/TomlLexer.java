@@ -6,9 +6,9 @@ import org.jetbrains.annotations.Nullable;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.EnumSet;
 import java.util.Objects;
-import java.util.function.IntPredicate;
 
 /* package */ final class TomlLexer {
     private final BufferedReader reader;
@@ -121,7 +121,7 @@ import java.util.function.IntPredicate;
     private static class DigitSequence {
         final int start, end;
         final boolean containsUnderscore;
-        static final DigitSequence EMPTY = new DigitSequence(0, 0, false)
+        static final DigitSequence EMPTY = new DigitSequence(0, 0, false);
         DigitSequence(int start, int end, boolean containsUnderscore) {
             this.start = start;
             this.end = end;
@@ -146,7 +146,7 @@ import java.util.function.IntPredicate;
     }
 
     private DigitSequence parseDigits() throws IOException {
-        this.parseDigits(NumberParseMode.INTEGER)
+        return this.parseDigits(NumberParseMode.INTEGER);
     }
     private DigitSequence parseDigits(NumberParseMode mode) throws IOException {
         if (mode == NumberParseMode.FLOAT) throw new UnsupportedOperationException();
@@ -190,7 +190,7 @@ import java.util.function.IntPredicate;
         };
         if (mode == NumberParseMode.FLOAT) {
             // Reset to the beginning
-            startIndex = charOffset;
+            charOffset = startIndex;
             return parseFloat();
         } else {
             if (mode != NumberParseMode.INTEGER) skipChars(2); // Skip the 0x, 0b, 0o identifiers for the mode
@@ -213,7 +213,8 @@ import java.util.function.IntPredicate;
 
     private Number parseInteger(NumberParseMode mode) throws IOException {
         if (mode == NumberParseMode.FLOAT) throw new UnsupportedOperationException();
-        int startLocation =  this.charOffset;
+        int startOffset =  this.charOffset;
+        TomlLocation startLocation = this.currentLocation();
         boolean hasSign = switch (peekChar()) {
             case '+', '-' -> true;
             default -> false;
@@ -225,23 +226,35 @@ import java.util.function.IntPredicate;
             );
         }
         if (hasSign) skipChar();
-        DigitSequence digits = parseDigits(NumberParseMode.INTEGER);
+        DigitSequence digits = parseDigits(mode);
         String toParse;
         if (digits.containsUnderscore) {
             StringBuilder res = new StringBuilder();
             if (hasSign) {
-                res.append(this.currentLine.charAt(startLocation));
+                res.append(this.currentLine.charAt(startOffset));
             }
-            digits.stripUnderscores(, res);
+            digits.stripUnderscores(this.currentLine, res);
             toParse = res.toString();
         } else {
-            toParse = currentLine.substring(startLocation, charOffset);
+            toParse = currentLine.substring(startOffset, charOffset);
         }
         try {
             long l = Long.parseLong(toParse, mode.radix);
+            if (MathUtil.canFitExactlyInInt(l)) {
+                return Math.toIntExact(l);
+            }  else {
+                return l;
+            }
         } catch (NumberFormatException e) {
             // Only reason this can happen is overflow
-
+            if (this.flags.contains(ParserFlag.USE_BIG_INTEGERS)) {
+                return new BigInteger(toParse, mode.radix);
+            } else {
+                throw new TomlSyntaxException(
+                        "Integer too big to fit into 64 bits",
+                        currentLocation()
+                );
+            }
         }
     }
     private Number parseFloat() throws IOException {
@@ -404,7 +417,7 @@ import java.util.function.IntPredicate;
         boolean literal = switch (peekToken()) {
             case BEGIN_LITERAL_STRING -> true;
             case BEGIN_STRING -> false;
-            default -> throw new IllegalStateException("Unexpected token: " + token);
+            default -> throw new IllegalStateException("Unexpected token: " + peekToken());
         };
         char quoteChar = literal ? '\'' : '"';
         TomlLocation startLocation = this.currentLocation();
@@ -458,7 +471,7 @@ import java.util.function.IntPredicate;
                     }
                 }
             }
-            throw new TomlSyntaxException("Unable to find closing quote `\"` for basic string", startLocation)
+            throw new TomlSyntaxException("Unable to find closing quote `\"` for basic string", startLocation);
         }
     }
     private void parseRegularEscape(StringBuilder result) throws IOException {
@@ -490,7 +503,7 @@ import java.util.function.IntPredicate;
             }
             if (escapedCodepoint < 0) throw new IllegalArgumentException();
             try {
-                result.append(Character.toChars(escapedCodepoint))
+                result.append(Character.toChars(escapedCodepoint));
             } catch (IllegalArgumentException e) {
                 throw new TomlSyntaxException("Not a valid uncicode codepoint: " + escapedCodepoint, escapeStart);
             }
@@ -504,9 +517,9 @@ import java.util.function.IntPredicate;
     }
     private String parseMultilineString(boolean literal) throws IOException {
         char quoteStyle = literal ? '\'' : '"';
-        assert this.peekChar() == quoteSyle;
+        assert this.peekChar() == quoteStyle;
         this.skipChars(3);
-        throw new UnsupportedOperationException("TODO");
+        throw new UnsupportedOperationException("TODO: Multiline string literals");
     }
 
     public enum TokenType {
