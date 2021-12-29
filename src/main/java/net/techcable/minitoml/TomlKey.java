@@ -98,7 +98,7 @@ public final class TomlKey {
     }
 
     public static final class Builder {
-        private final List<String> parts = new ArrayList<>();
+        private final List<String> parts = new ArrayList<>(1);
         private TomlLocation location = null;
 
         public Builder withLocation(TomlLocation location) {
@@ -116,6 +116,10 @@ public final class TomlKey {
         public Builder add(String key) {
             this.parts.add(Objects.requireNonNull(key));
             return this;
+        }
+
+        public int currentLength() {
+            return this.parts.size();
         }
 
         public TomlKey build() {

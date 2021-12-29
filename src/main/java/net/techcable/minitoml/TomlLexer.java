@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.EnumSet;
 import java.util.Objects;
+import java.util.function.IntPredicate;
 
 /* package */ final class TomlLexer {
     private final BufferedReader reader;
@@ -32,13 +33,13 @@ import java.util.Objects;
      * Returns null if already at the end of the file.
      */
     @Nullable
-    private String consumeLine() throws IOException {
+    public String consumeLine() throws IOException {
         String line = currentLine();
         this.currentLine = null;
         return line;
     }
     @Nullable
-    private String currentLine() throws IOException {
+    public String currentLine() throws IOException {
         if (this.currentLine == null) {
             this.currentLine = advanceLine();
         }
@@ -54,7 +55,7 @@ import java.util.Objects;
         return line;
     }
 
-    private TomlLocation currentLocation() {
+    public TomlLocation currentLocation() {
         if (lineNumber < 1) throw new IllegalStateException();
         return new TomlLocation(
                 this.lineNumber,
@@ -363,6 +364,25 @@ import java.util.Objects;
         }
     }
 
+    @FunctionalInterface
+    public interface CharPredicate {
+        boolean test(char c);
+    }
+    public String takeWhile(CharPredicate pred) throws IOException {
+        String line = currentLine();
+        if (line == null) throw new IllegalStateException("EOF");
+        final int startOffset = charOffset;
+        while (charOffset < line.length()) {
+            char c = line.charAt(charOffset);
+            if (pred.test(c)) {
+                charOffset += 1;
+            } else {
+                break;
+            }
+        }
+        return line.substring(startOffset, charOffset);
+    }
+
     /**
      * Peek at the next token without necessarily consuming it.
      *
@@ -387,14 +407,12 @@ import java.util.Objects;
             }
             case '[' -> TokenType.OPEN_BRACKET;
             case ']' -> TokenType.CLOSE_BRACKET;
-            case '_' -> TokenType.IDENTIFIER;
+            case '_' -> TokenType.UNDERSCORE;
             default -> {
-                if (c >= '0' && c <= '9') {
+                if (AsciiUtils.isDigit((char) c)) {
                     yield TokenType.DIGIT; // Could be identifier or number
-                } else if (c >= 'a' && c <= 'z') {
-                    yield TokenType.IDENTIFIER;
-                } else if (c >= 'A' && c <= 'Z') {
-                    yield TokenType.IDENTIFIER;
+                } else if (AsciiUtils.isLetter((char) c)) {
+                    yield TokenType.LETTER;
                 } else {
                     throw new TomlSyntaxException(
                             "Unexpected character " + c,
@@ -405,16 +423,16 @@ import java.util.Objects;
         };
     }
 
+    public void skipComments() throws IOException {
+        while (peekToken() == TokenType.BEGIN_COMMENT) {
+            consumeLine();
+        }
+    }
     public TokenType skipToken() throws IOException {
         TokenType currentToken = peekToken();
         if (!currentToken.simple) throw new IllegalArgumentException("Token is not simple: " + currentToken);
         this.skipChars(currentToken.length());
         return currentToken;
-    }
-
-
-    public String parseKeyPart() {
-        
     }
 
     public String parseString(boolean allowMultiline) throws IOException {
@@ -542,11 +560,37 @@ import java.util.Objects;
         // Not simple because it signals the beginning of a number
         DIGIT(false),
         COMMA(true),
-        IDENTIFIER(false),
+        UNDERSCORE(true),
+        LETTER(false),
         OPEN_BRACKET(true),
         CLOSE_BRACKET(true),
         OPEN_BRACE(true),
         CLOSE_BRACE(true);
+
+        /**
+         * A user-visible name of this token (for error purposes).
+         */
+        @Override
+        public String toString() {
+            return switch (this) {
+                case BEGIN_COMMENT -> "a comment";
+                case BEGIN_STRING -> "a string";
+                case BEGIN_LITERAL_STRING -> "a literal string";
+                case EOL -> "EOL";
+                case EOF -> "EOF";
+                case DOT -> "'.'";
+                case PLUS -> "'+'";
+                case MINUS -> "'-'";
+                case DIGIT -> "a digit";
+                case COMMA -> "','";
+                case UNDERSCORE -> "'_'";
+                case LETTER -> "a letter";
+                case OPEN_BRACKET -> "open bracket [";
+                case CLOSE_BRACKET -> "close bracket ]";
+                case OPEN_BRACE -> "open brace {";
+                case CLOSE_BRACE -> "close brace }";
+            };
+        }
 
         int length() {
             if (!simple) throw new UnsupportedOperationException();

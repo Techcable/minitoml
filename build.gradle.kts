@@ -10,7 +10,6 @@ repositories {
 }
 
 dependencies {
-    implementation("")
     /*
      * Jetbrains annotations is a *compile-only* dependency.
      *

@@ -53,7 +53,7 @@ public class TomlPrimitive extends TomlValue {
      * @param value the numeric value
      * @param location
      */
-    private TomlPrimitive(TomlType tomlType, Number value, TomlLocation location) {
+    /* package */ TomlPrimitive(TomlType tomlType, Number value, TomlLocation location) {
         super(tomlType, location);
         assert tomlType.isNumber();
         this.value = Objects.requireNonNull(value);
