@@ -171,7 +171,7 @@ public abstract class TomlValue {
      *
      * @return the equivalent json object, as a string
      */
-    public final String toJsonString(boolean pretty) {
+    public final String toJsonString() {
         StringBuilder builder = new StringBuilder();
         this.toJson(builder);
         return builder.toString();

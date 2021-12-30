@@ -13,6 +13,7 @@ import java.math.BigDecimal;
  */
 public class TomlParser {
     private final TomlLexer lexer;
+    private final TomlTableBuilder pendingTable = TomlTable.builder();
     private TomlParser(TomlLexer lexer) {
         this.lexer = lexer;
     }
@@ -26,9 +27,6 @@ public class TomlParser {
         }
         return builder.build();
     }
-    private static boolean isValidBareIdentifier(char c) {
-        return AsciiUtils.isDigit(c) || AsciiUtils.isLetter(c) || c == '_' || c == '-';
-    }
     private String parseKeyPart() throws IOException {
         TokenType tokenType = lexer.peekToken();
         return switch (tokenType) {
@@ -37,7 +35,7 @@ public class TomlParser {
              * Per the spec, bare keys can be ASCII letters, digits, underscores and dashes.
              */
             case DIGIT, UNDERSCORE, MINUS, LETTER -> {
-                String bareKey = lexer.takeWhile(TomlParser::isValidBareIdentifier);
+                String bareKey = lexer.takeWhile(TomlKey::isValidBareIdentifier);
                 if (bareKey.isEmpty()) throw new AssertionError(); // Should've been checked by peekToken
                 yield bareKey;
             }
@@ -45,7 +43,7 @@ public class TomlParser {
         };
     }
 
-    public TomlValue parseValue() throws IOException {
+    private TomlValue parseValue() throws IOException {
         lexer.skipComments();
         TomlLocation startLocation = lexer.currentLocation();
         TokenType tokenType = lexer.peekToken();
@@ -72,5 +70,17 @@ public class TomlParser {
             case OPEN_BRACKET -> throw new UnsupportedOperationException("Inline arrays");
             case OPEN_BRACE -> throw new UnsupportedOperationException("Inline braces");
         };
+    }
+
+
+
+    public TomlTable parseTable() throws IOException {
+        TomlType nextToken;
+        while ((nextToken = lexer.peekToken()) != TokenType.EOF) {
+            switch (nextToken) {
+                case INTEGER ->
+            }
+        }
+        return this.pendingTable.build();
     }
 }
